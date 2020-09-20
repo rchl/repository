@@ -2,19 +2,20 @@
 Translate GitHub "release event" JSON into a Package Control repository entry,
 and then modify the repository.json file appropriately.
 
-The JSON must be supplied over stdin. An optional argument
-`--sublime-text-version-range` can be given to specify the valid range of ST
-versions.
+The JSON must be supplied over stdin.
+The text of the release body is parsed to find a line that starts with
+
+    Sublime-Text-Version-Range:
+
+The text after it defines the value for the "sublime_text" entry of all
+"releases" entries.
 
 This script is meant for packages that bundle binaries inside the package.
 For those kind of packages, the package entry in the repository.json file must
 be updated for each new release. This script automates that boring process.
-
-TODO: The sublime_text version range should be extracted from JSON.
 """
 
 from typing import Dict, Any
-import argparse
 import functools
 import json
 import os
@@ -50,6 +51,14 @@ def translate_date(gh_date: str) -> str:
     means UTC so we don't have to do any time zone calculations.
     """
     return gh_date.replace("T", " ", 1)[:-1]
+
+
+def parse_st_range_from_release_body(body: str) -> str:
+    for line in body.splitlines(keepends=False)
+    marker = "Sublime-Text-Version-Range: "
+    if line.startswith(marker):
+        return line[len(marker):]
+    raise ValueError('missing "Sublime-Text-Version-Range"')
 
 
 def translate_release_asset(
@@ -114,15 +123,13 @@ def set_workflow_output(**kwargs: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sublime-text-version-range", default=">=3154")
-    args = parser.parse_args()
     source = json.load(sys.stdin)
     release = source["release"]
     tag_name = release["tag_name"]
     date = translate_date(release["published_at"])
-    f = functools.partial(translate_release_asset,
-                          args.sublime_text_version_range, tag_name, date)
+    body_text = release["body"]
+    st_range = parse_st_range_from_release_body(body_text)
+    f = functools.partial(translate_release_asset, st_range, tag_name, date)
     payload = {
         "releases": [f(asset) for asset in release["assets"]],
         "name": source["repository"]["name"],
@@ -145,10 +152,10 @@ def main() -> None:
         fp.write("\n")
     commit_title = "Update {}".format(name) if found else "Add {}".format(name)
     set_workflow_output(
-        commit_message="{}\n\n{}".format(commit_title, release["body"]),
+        commit_message="{}\n\n{}".format(commit_title, body_text),
         pr_title=commit_title,
         pr_body="## Repo link\n{}\n\n## Release body\n{}".format(
-            payload["details"], release["body"])
+            payload["details"], body_text)
     )
 
 
